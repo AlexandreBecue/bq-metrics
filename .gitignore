@@ -1,0 +1,35 @@
+# Node modules and dependencies
+node_modules/
+/dist
+/dist-ssr
+
+# Environment files (Sensitive Client IDs & Secrets)
+.env
+.env.*
+!.env.example
+
+# Local personal data and backups
+data/
+
+# Local utility scripts (not needed for deployment)
+scripts/
+
+# IDEs, Editors and OS metadata
+.idea/
+*.iml
+.vscode/*
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
