@@ -302,7 +302,8 @@ export async function triggerGoogleDriveSync(token = googleAccessToken): Promise
       await uploadCloudData(token, mergedBackup, fileId);
     }
     
-    const dateStr = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('fr-FR') + ' à ' + now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     lastSyncTime.value = dateStr;
     localStorage.setItem('bq_last_sync_time', dateStr);
     

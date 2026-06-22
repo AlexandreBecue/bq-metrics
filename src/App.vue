@@ -6,14 +6,10 @@ import DataExplorerView from './components/DataExplorerView.vue';
 import CollectionChartsView from './components/CollectionChartsView.vue';
 import CollectionsManagerView from './components/CollectionsManagerView.vue';
 import SettingsView from './components/SettingsView.vue';
-import { 
+import { checkSavedConnectionState } from './db/google-drive';
+import {
   LayoutDashboard, TableProperties, Database, Settings, Flame, Menu, X, BarChart3
 } from '@lucide/vue';
-import { 
-  isDriveConnected, 
-  checkSavedConnectionState, 
-  triggerGoogleDriveSync 
-} from './db/google-drive';
 
 // Navigation State
 const activeTab = ref<string>('dashboard');
@@ -41,31 +37,13 @@ const dbStatusText = computed(() => {
 onMounted(async () => {
   await seedDatabaseIfEmpty();
   checkSavedConnectionState();
-  if (isDriveConnected.value) {
-    // Silently auto-sync on load
-    triggerGoogleDriveSync().then((success) => {
-      if (success) {
-        handleDataUpdated();
-      }
-    });
-  } else {
-    handleDataUpdated();
-  }
+  handleDataUpdated();
 });
 
 const handleDataUpdated = () => {
   dashboardKey.value++;
-  
-  // If Google Drive is connected, auto-sync in the background!
-  if (isDriveConnected.value) {
-    triggerGoogleDriveSync().then((success) => {
-      if (success) {
-        dashboardKey.value++;
-        explorerKey.value++;
-        collectionsKey.value++;
-      }
-    });
-  }
+  explorerKey.value++;
+  collectionsKey.value++;
 };
 
 // Navigates and triggers dynamic actions

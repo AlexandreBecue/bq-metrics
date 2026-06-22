@@ -11,7 +11,7 @@ export default defineConfig({
       includeAssets: ['favicon.ico', 'apple-touch-icon-180x180.png', 'favicon.svg'],
       manifest: {
         name: 'bq-metrics',
-        short_name: 'bqMetrics',
+        short_name: 'BQ Metrics',
         description: 'Centralise et analyse toutes tes données du quotidien',
         theme_color: '#3b82f6',
         background_color: '#0f172a',
