@@ -1,4 +1,4 @@
-import { type RecordEntry, type SavedFilter } from './index.ts';
+import { type RecordEntry, type SavedFilter, type CollectionSchema } from './index';
 
 /**
  * Evaluates whether a record matches a list of filters based on the logical operator (AND / OR).
@@ -438,5 +438,34 @@ export function evaluateFormula(formula: string, data: Record<string, any>): any
     return result;
   } catch (err) {
     return '';
+  }
+}
+
+/**
+ * Backfills and updates calculated fields for a list of records based on the collection's fields.
+ * If any record's calculated values are missing or outdated, they are computed and persisted back to the database.
+ */
+export async function backfillCalculatedFields(
+  records: RecordEntry[],
+  collection: CollectionSchema,
+  db: any
+): Promise<void> {
+  const calculatedFields = collection.fields.filter(f => f.isCalculated && f.formula);
+  if (calculatedFields.length === 0) return;
+
+  for (const rec of records) {
+    let hasChanges = false;
+    calculatedFields.forEach(f => {
+      const computedVal = evaluateFormula(f.formula!, rec.data);
+      if (rec.data[f.key] !== computedVal) {
+        rec.data[f.key] = computedVal;
+        hasChanges = true;
+      }
+    });
+
+    if (hasChanges) {
+      rec.updatedAt = Date.now();
+      await db.records.put(rec);
+    }
   }
 }

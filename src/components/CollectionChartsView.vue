@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue';
 import { db, type CollectionSchema, type RecordEntry, type SavedView } from '../db';
-import { evaluateFilters, aggregateData, formatToFrenchDate } from '../db/queries';
+import { evaluateFilters, aggregateData, formatToFrenchDate, backfillCalculatedFields } from '../db/queries';
 import { 
   Bar as BarChart, 
   Line as LineChart, 
@@ -208,6 +208,11 @@ const loadChartsData = async () => {
     // 1. Get raw records for this collection
     const rawRecords = await db.records.where('collectionId').equals(widget.collectionId).toArray();
     const activeRecords = rawRecords.filter(r => !r.deletedAt);
+    
+    // Auto-backfill calculated fields if any are missing or outdated
+    if (activeCollection.value) {
+      await backfillCalculatedFields(activeRecords, activeCollection.value, db);
+    }
     
     // 2. Filter records (applying local overrides for interactive filters)
     const activeFilters = widget.filters.map(f => {
