@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, computed, shallowRef } from 'vue';
 import { db, generateId, dbStatus, type CollectionSchema, type RecordEntry, type SavedFilter, type SavedView, type RecordTemplate } from '../db';
-import { evaluateFilters, formatToFrenchDate, evaluateFormula } from '../db/queries';
+import { evaluateFilters, formatToFrenchDate, evaluateFormula, backfillCalculatedFields } from '../db/queries';
 import { 
   Plus, Trash2, Edit2, Search, SlidersHorizontal, Filter, Save, 
   X, Check, AlertCircle, LayoutDashboard, Sparkles, Bell
@@ -188,6 +188,12 @@ const loadRecords = async () => {
   try {
     const rawRecords = await db.records.where('collectionId').equals(selectedCollectionId.value).toArray();
     records.value = rawRecords.filter(r => !r.deletedAt);
+    
+    // Auto-evaluate and backfill any missing or outdated calculated fields
+    if (activeCollection.value) {
+      await backfillCalculatedFields(records.value, activeCollection.value, db);
+    }
+    
     await loadRelatedRecords();
     dbStatus.value = 'ready';
   } catch (e) {
