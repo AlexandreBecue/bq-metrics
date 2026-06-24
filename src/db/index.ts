@@ -1,6 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import { ref } from 'vue';
-import { evaluateFormula } from './queries.ts';
+import { evaluateFormula } from './queries';
 
 export type DBStatus = 'ready' | 'loading' | 'saving' | 'error';
 export const dbStatus = ref<DBStatus>('ready');
@@ -49,6 +49,7 @@ export interface SavedFilter {
   fieldKey: string;
   operator: 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'not_contains' | 'in_tags' | 'is_empty' | 'is_not_empty';
   value: any;
+  isInteractive?: boolean;
 }
 
 // Saved View (Filters, sorting, and charts configurations)
@@ -60,7 +61,7 @@ export interface SavedView {
   logicalOperator: 'and' | 'or';
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
-  chartType: 'none' | 'bar' | 'pie' | 'line';
+  chartType: 'none' | 'bar' | 'pie' | 'line' | 'doughnut';
   chartConfig?: {
     xAxisKey: string;        // Field key for X axis
     yAxisKey: string;        // Field key for Y axis, or "count"
