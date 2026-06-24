@@ -70,9 +70,15 @@ const activeCollection = computed(() => {
 const chartZoomFilters = ref<Record<string, { start: string; end: string }>>({});
 // Controls whether the zoom panel is expanded: { [widgetId]: boolean }
 const showZoomControls = ref<Record<string, boolean>>({});
+// Controls whether the HTML legend is expanded: { [widgetId]: boolean }
+const showLegends = ref<Record<string, boolean>>({});
 
 const toggleZoomControls = (widgetId: string) => {
   showZoomControls.value[widgetId] = !showZoomControls.value[widgetId];
+};
+
+const toggleLegend = (widgetId: string) => {
+  showLegends.value[widgetId] = !showLegends.value[widgetId];
 };
 
 const getOrCreateZoom = (widgetId: string) => {
@@ -135,6 +141,11 @@ const getDateFieldOfCollection = (widget: SavedView) => {
 
 const hasDateField = (widget: SavedView) => {
   return getDateFieldOfCollection(widget) !== undefined;
+};
+
+const getFieldUnit = (widget: SavedView) => {
+  const yField = activeCollection.value?.fields.find(f => f.key === widget.chartConfig?.yAxisKey);
+  return yField?.unit ? ` ${yField.unit}` : '';
 };
 
 const hasControls = (widget: SavedView) => {
@@ -369,6 +380,7 @@ watch(selectedCollectionId, async (newVal) => {
     localStorage.setItem('bq-metrics-active-collection-id', newVal);
     chartZoomFilters.value = {}; // Reset local zoom filters when switching collections
     showZoomControls.value = {}; // Reset zoom panel expansions when switching collections
+    showLegends.value = {}; // Reset local HTML legend toggles when switching collections
     interactiveValues.value = {}; // Reset local interactive filters when switching collections
     await loadChartsData();
   }
@@ -380,14 +392,7 @@ const barChartOptions = computed<ChartOptions<'bar'>>(() => ({
   maintainAspectRatio: false,
   plugins: {
     legend: {
-      position: 'bottom',
-      labels: {
-        color: '#94a3b8',
-        font: {
-          family: 'Inter',
-          size: 11
-        }
-      }
+      display: false
     },
     tooltip: {
       backgroundColor: '#1e293b',
@@ -443,14 +448,7 @@ const lineChartOptions = computed<ChartOptions<'line'>>(() => ({
   maintainAspectRatio: false,
   plugins: {
     legend: {
-      position: 'bottom',
-      labels: {
-        color: '#94a3b8',
-        font: {
-          family: 'Inter',
-          size: 11
-        }
-      }
+      display: false
     },
     tooltip: {
       backgroundColor: '#1e293b',
@@ -506,16 +504,7 @@ const pieChartThemeOptions = computed<ChartOptions<'pie'>>(() => ({
   maintainAspectRatio: false,
   plugins: {
     legend: {
-      position: 'bottom',
-      labels: {
-        color: '#94a3b8',
-        boxWidth: 12,
-        padding: 8,
-        font: {
-          family: 'Inter',
-          size: 11
-        }
-      }
+      display: false
     },
     tooltip: {
       backgroundColor: '#1e293b',
@@ -541,16 +530,7 @@ const doughnutOptions = computed<ChartOptions<'doughnut'>>(() => ({
   cutout: '70%',
   plugins: {
     legend: {
-      position: 'bottom',
-      labels: {
-        color: '#94a3b8',
-        boxWidth: 12,
-        padding: 8,
-        font: {
-          family: 'Inter',
-          size: 11
-        }
-      }
+      display: false
     },
     tooltip: {
       backgroundColor: '#1e293b',
@@ -642,7 +622,8 @@ const getChartData = (widgetId: string, widgetName: string) => {
         hoverOffset: 4,
         data: data.values,
         customTooltips: data.tooltips,
-        unit: unit
+        unit: unit,
+        radius: 120 // Lock outer radius of pie/doughnut circle for geometric sizing consistency
       }
     ]
   };
@@ -735,17 +716,29 @@ defineExpose({
           :class="['card glass widget-card', ['pie', 'doughnut'].includes(widget.chartType) ? 'circular-chart-card' : '']"
         >
           <div class="widget-header">
-            <h4>{{ widget.name }}</h4>
+            <h4 :title="widget.name">{{ widget.name }}</h4>
             
-            <!-- Zoom Toggle Button -->
-            <button 
-              v-if="hasControls(widget)" 
-              @click="toggleZoomControls(widget.id)" 
-              :class="['btn-toggle-zoom', showZoomControls[widget.id] || hasActiveFilters(widget) ? 'active' : '']"
-              title="Filtrer et ajuster les contrôles"
-            >
-              Filtrer <span v-if="hasActiveFilters(widget)" class="zoom-badge-dot"></span>
-            </button>
+            <div class="widget-header-actions">
+              <!-- Legend Toggle Button -->
+              <button 
+                v-if="widgetData[widget.id]?.labels?.length > 0" 
+                @click="toggleLegend(widget.id)" 
+                :class="['btn-toggle-legend', showLegends[widget.id] ? 'active' : '']"
+                title="Afficher/Masquer la légende"
+              >
+                Légende
+              </button>
+
+              <!-- Zoom Toggle Button -->
+              <button 
+                v-if="hasControls(widget)" 
+                @click="toggleZoomControls(widget.id)" 
+                :class="['btn-toggle-zoom', showZoomControls[widget.id] || hasActiveFilters(widget) ? 'active' : '']"
+                title="Filtrer et ajuster les contrôles"
+              >
+                Filtrer <span v-if="hasActiveFilters(widget)" class="zoom-badge-dot"></span>
+              </button>
+            </div>
           </div>
 
           <!-- Collapsible Date Zoom and Interactive Controls Panel -->
@@ -756,21 +749,23 @@ defineExpose({
                 Période 
                 <span class="operator-suffix">({{ getDateFieldOfCollection(widget)?.name }})</span> :
               </span>
-              <input 
-                type="date" 
-                v-model="getOrCreateZoom(widget.id).start" 
-                @change="loadChartsData" 
-                class="zoom-input" 
-                title="Date de début"
-              />
-              <span class="zoom-separator">au</span>
-              <input 
-                type="date" 
-                v-model="getOrCreateZoom(widget.id).end" 
-                @change="loadChartsData" 
-                class="zoom-input" 
-                title="Date de fin"
-              />
+              <div class="zoom-inputs-group">
+                <input 
+                  type="date" 
+                  v-model="getOrCreateZoom(widget.id).start" 
+                  @change="loadChartsData" 
+                  class="zoom-input" 
+                  title="Date de début"
+                />
+                <span class="zoom-separator">au</span>
+                <input 
+                  type="date" 
+                  v-model="getOrCreateZoom(widget.id).end" 
+                  @change="loadChartsData" 
+                  class="zoom-input" 
+                  title="Date de fin"
+                />
+              </div>
             </div>
 
             <!-- 2. Dynamic Interactive Filters -->
@@ -872,6 +867,19 @@ defineExpose({
               :data="getLineChartData(widget.id, widget.name)" 
               :options="lineChartOptions" 
             />
+          </div>
+
+          <!-- HTML Legend for All Charts (Bar, Line, Pie & Doughnut) - Collapsible and hidden by default -->
+          <div v-if="widgetData[widget.id]?.labels?.length > 0 && showLegends[widget.id]" class="chart-html-legend fade-in">
+            <div 
+              v-for="(label, idx) in widgetData[widget.id]?.labels || []" 
+              :key="idx" 
+              class="legend-item"
+            >
+              <span class="legend-color-box" :style="{ backgroundColor: chartColors[idx % chartColors.length] }"></span>
+              <span class="legend-label-text">{{ label }} :</span>
+              <span class="legend-value-text">{{ widgetData[widget.id]?.values[idx] }}{{ getFieldUnit(widget) }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -1045,12 +1053,12 @@ defineExpose({
   display: flex;
   flex-direction: column;
   min-height: 380px;
+  min-width: 0; /* Prevent horizontal container expansion */
+  width: 100%;  /* Fill the grid column width exactly */
 
   &.circular-chart-card {
-    min-height: 480px;
-
     .chart-wrapper {
-      min-height: 380px;
+      height: 260px; /* Locked height of 260px since HTML legend sits below it */
     }
   }
   
@@ -1061,24 +1069,38 @@ defineExpose({
     display: flex;
     justify-content: space-between;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 0.75rem;
+    gap: 0.5rem;
     
     h4 {
       font-size: 1.05rem;
       font-weight: 700;
       color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+      min-width: 0;
+      margin-right: 0.25rem;
+    }
+
+    .widget-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-shrink: 0; /* Keeps buttons side-by-side without squeezing */
     }
   }
   
   .chart-wrapper {
     position: relative;
-    flex: 1;
-    min-height: 280px;
+    height: 280px; /* Locked height to prevent vertical accumulation */
+    width: 100%;   /* Constrain canvas width precisely inside card content */
+    min-width: 0;  /* Allow shrink */
+    overflow: hidden;
   }
 }
 
-.btn-toggle-zoom {
+.btn-toggle-zoom, .btn-toggle-legend {
   background-color: var(--bg-tertiary);
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
@@ -1135,6 +1157,19 @@ defineExpose({
     align-items: center;
     gap: 0.75rem;
     width: 100%;
+    
+    &.date-zoom-row {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.4rem;
+      
+      .zoom-inputs-group {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        width: 100%;
+      }
+    }
   }
 
   .zoom-label {
@@ -1201,6 +1236,14 @@ defineExpose({
       flex-direction: column;
       align-items: stretch;
       gap: 0.35rem;
+      
+      &.date-zoom-row {
+        .zoom-inputs-group {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 0.35rem;
+        }
+      }
     }
 
     .zoom-label {
@@ -1221,6 +1264,56 @@ defineExpose({
       height: 34px;
       margin-top: 0.25rem;
       align-self: stretch;
+    }
+  }
+}
+
+.chart-html-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem;
+  margin-top: 0.5rem;
+  max-height: 120px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  padding-top: 0.75rem;
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--border-color);
+    border-radius: 4px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    padding: 0.2rem 0.5rem;
+    border-radius: var(--radius-sm);
+    
+    .legend-color-box {
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
+    .legend-label-text {
+      font-weight: 500;
+    }
+
+    .legend-value-text {
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-left: 0.15rem;
     }
   }
 }
