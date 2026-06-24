@@ -266,6 +266,13 @@ onMounted(() => {
   padding: 0.6rem 1rem !important;
   font-size: 0.9rem;
   border-radius: var(--radius-md);
+  white-space: normal;
+  text-align: left;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  word-break: break-word;
   
   &:hover {
     border-color: var(--color-primary);
@@ -282,6 +289,7 @@ onMounted(() => {
   .launchpad-plus {
     width: 16px;
     height: 16px;
+    flex-shrink: 0;
   }
 }
 

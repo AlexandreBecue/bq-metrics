@@ -303,11 +303,11 @@ export async function triggerGoogleDriveSync(token = googleAccessToken): Promise
     }
     
     const now = new Date();
-    const dateStr = now.toLocaleDateString('fr-FR') + ' à ' + now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const dateStr = 'le ' + now.toLocaleDateString('fr-FR') + ' à ' + now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     lastSyncTime.value = dateStr;
     localStorage.setItem('bq_last_sync_time', dateStr);
     
-    syncStatusMsg.value = `Synchronisé avec succès à ${dateStr}`;
+    syncStatusMsg.value = 'Données synchronisées avec succès.';
     isSyncing.value = false;
     return true;
   } catch (err: any) {

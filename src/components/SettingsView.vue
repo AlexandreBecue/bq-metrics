@@ -141,6 +141,10 @@ const handleClearDatabase = async () => {
     if (isDriveConnected.value) {
       disconnectGoogleDrive();
     }
+    // Clear last sync metadata from memory and storage since database is cleared
+    lastSyncTime.value = '';
+    localStorage.removeItem('bq_last_sync_time');
+    
     showConfirmClear.value = false;
     showStatus('Toutes les données locales ont été effacées.', false);
     emit('data-updated');
@@ -179,12 +183,28 @@ const showStatus = (msg: string, error = false) => {
           Sauvegarde et synchronise automatiquement ou manuellement tes données sur ton compte Google Drive personnel.
         </p>
 
-        <div v-if="!isDriveConnected" class="actions-group">
-          <button @click="connectGoogleDrive" class="btn btn-primary bg-drive">
-            <Cloud class="btn-icon" />
-            Se connecter à Google Drive
-          </button>
-          <p class="field-tip text-center mt-2">Connexion directe et hautement sécurisée (accès restreint uniquement aux fichiers créés par l'application).</p>
+        <div v-if="!isDriveConnected">
+          <div class="actions-group">
+            <button @click="connectGoogleDrive" class="btn btn-primary bg-drive">
+              <Cloud class="btn-icon" />
+              Se connecter à Google Drive
+            </button>
+            <p class="field-tip text-center mt-2">Connexion directe et hautement sécurisée (accès restreint uniquement aux fichiers créés par l'application).</p>
+          </div>
+          
+          <div v-if="lastSyncTime" class="drive-status-box">
+            <div class="status-row-item">
+              <span class="status-label">Statut :</span>
+              <span class="status-value text-muted">⚪ Déconnecté</span>
+            </div>
+            <div class="status-row-item">
+              <span class="status-label">Dernière synchro :</span>
+              <span class="status-value">{{ lastSyncTime }}</span>
+            </div>
+            <div class="status-msg-box text-center">
+              <p>Connecte-toi pour réactiver la synchronisation automatique de tes données.</p>
+            </div>
+          </div>
         </div>
 
         <div v-else class="drive-status-box">

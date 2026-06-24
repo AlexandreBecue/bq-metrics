@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, computed } from 'vue';
-import { seedDatabaseIfEmpty, dbStatus } from './db';
+import { dbStatus } from './db';
 import DashboardView from './components/DashboardView.vue';
 import DataExplorerView from './components/DataExplorerView.vue';
 import CollectionChartsView from './components/CollectionChartsView.vue';
 import CollectionsManagerView from './components/CollectionsManagerView.vue';
 import SettingsView from './components/SettingsView.vue';
-import { checkSavedConnectionState } from './db/google-drive';
-import {
+import { 
   LayoutDashboard, TableProperties, Database, Settings, Flame, Menu, X, BarChart3
 } from '@lucide/vue';
+import { 
+  checkSavedConnectionState 
+} from './db/google-drive';
 
 // Navigation State
 const activeTab = ref<string>('dashboard');
@@ -35,7 +37,6 @@ const dbStatusText = computed(() => {
 
 // Initialize DB seeding on mount
 onMounted(async () => {
-  await seedDatabaseIfEmpty();
   checkSavedConnectionState();
   handleDataUpdated();
 });
