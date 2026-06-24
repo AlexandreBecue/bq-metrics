@@ -5,7 +5,8 @@ import { evaluateFilters, aggregateData, formatToFrenchDate } from '../db/querie
 import { 
   Bar as BarChart, 
   Line as LineChart, 
-  Pie as PieChart 
+  Pie as PieChart,
+  Doughnut as DoughnutChart
 } from 'vue-chartjs';
 import { 
   Chart as ChartJS, 
@@ -65,6 +66,131 @@ const activeCollection = computed(() => {
   return collections.value.find(c => c.id === selectedCollectionId.value);
 });
 
+// Local zoom filters for date-based charts: { [widgetId]: { start: '', end: '' } }
+const chartZoomFilters = ref<Record<string, { start: string; end: string }>>({});
+// Controls whether the zoom panel is expanded: { [widgetId]: boolean }
+const showZoomControls = ref<Record<string, boolean>>({});
+// Controls whether the HTML legend is expanded: { [widgetId]: boolean }
+const showLegends = ref<Record<string, boolean>>({});
+// Controls whether the widget title is expanded to wrap on mobile: { [widgetId]: boolean }
+const expandedTitles = ref<Record<string, boolean>>({});
+
+const toggleZoomControls = (widgetId: string) => {
+  showZoomControls.value[widgetId] = !showZoomControls.value[widgetId];
+};
+
+const toggleLegend = (widgetId: string) => {
+  showLegends.value[widgetId] = !showLegends.value[widgetId];
+};
+
+const toggleTitle = (widgetId: string) => {
+  expandedTitles.value[widgetId] = !expandedTitles.value[widgetId];
+};
+
+const getOrCreateZoom = (widgetId: string) => {
+  if (!chartZoomFilters.value[widgetId]) {
+    chartZoomFilters.value[widgetId] = { start: '', end: '' };
+  }
+  return chartZoomFilters.value[widgetId];
+};
+
+// Local interactive filter values: { [widgetId]: { [fieldKey]: value } }
+const interactiveValues = ref<Record<string, Record<string, any>>>({});
+
+const getInteractiveValue = (widgetId: string, fieldKey: string, defaultValue: any) => {
+  if (!interactiveValues.value[widgetId]) {
+    interactiveValues.value[widgetId] = {};
+  }
+  if (interactiveValues.value[widgetId][fieldKey] === undefined) {
+    interactiveValues.value[widgetId][fieldKey] = defaultValue;
+  }
+  return interactiveValues.value[widgetId][fieldKey];
+};
+
+const setInteractiveValue = async (widgetId: string, fieldKey: string, value: any) => {
+  if (!interactiveValues.value[widgetId]) {
+    interactiveValues.value[widgetId] = {};
+  }
+  interactiveValues.value[widgetId][fieldKey] = value;
+  await loadChartsData();
+};
+
+const resetZoom = async (widgetId: string) => {
+  if (chartZoomFilters.value[widgetId]) {
+    chartZoomFilters.value[widgetId] = { start: '', end: '' };
+  }
+  
+  if (interactiveValues.value[widgetId]) {
+    const widget = widgets.value.find(w => w.id === widgetId);
+    if (widget) {
+      widget.filters.forEach(f => {
+        if (f.isInteractive && f.fieldKey) {
+          interactiveValues.value[widgetId][f.fieldKey] = f.value;
+        }
+      });
+    }
+  }
+  
+  await loadChartsData();
+};
+
+const getDateFieldOfCollection = (widget: SavedView) => {
+  if (!widget.chartConfig || !activeCollection.value) return undefined;
+  
+  // 1. In priority, check if the X axis is a date
+  const xAxisField = activeCollection.value.fields.find(f => f.key === widget.chartConfig?.xAxisKey);
+  if (xAxisField?.type === 'date') return xAxisField;
+  
+  // 2. Otherwise, find the first available date field in the collection
+  return activeCollection.value.fields.find(f => f.type === 'date');
+};
+
+const hasDateField = (widget: SavedView) => {
+  return getDateFieldOfCollection(widget) !== undefined;
+};
+
+const getFieldUnit = (widget: SavedView) => {
+  const yField = activeCollection.value?.fields.find(f => f.key === widget.chartConfig?.yAxisKey);
+  return yField?.unit ? ` ${yField.unit}` : '';
+};
+
+const hasControls = (widget: SavedView) => {
+  return hasDateField(widget) || widget.filters.some(f => f.isInteractive);
+};
+
+const hasActiveFilters = (widget: SavedView) => {
+  const datesActive = chartZoomFilters.value[widget.id]?.start || chartZoomFilters.value[widget.id]?.end;
+  if (datesActive) return true;
+
+  const localOverrides = interactiveValues.value[widget.id];
+  if (localOverrides) {
+    return Object.keys(localOverrides).some(key => {
+      const filter = widget.filters.find(f => f.fieldKey === key);
+      return filter && localOverrides[key] !== filter.value;
+    });
+  }
+  return false;
+};
+
+const getFieldConfig = (fieldKey: string) => {
+  return activeCollection.value?.fields.find(f => f.key === fieldKey);
+};
+
+const getOperatorLabel = (operator: string) => {
+  switch (operator) {
+    case 'eq': return 'égal';
+    case 'neq': return 'différent';
+    case 'gt': return 'supérieur';
+    case 'gte': return '≥';
+    case 'lt': return 'inférieur';
+    case 'lte': return '≤';
+    case 'contains': return 'contient';
+    case 'not_contains': return 'sans';
+    case 'in_tags': return 'tag';
+    default: return '';
+  }
+};
+
 const loadInitialData = async () => {
   const rawCols = await db.collections.toArray();
   collections.value = rawCols
@@ -100,8 +226,40 @@ const loadChartsData = async () => {
     const rawRecords = await db.records.where('collectionId').equals(widget.collectionId).toArray();
     const activeRecords = rawRecords.filter(r => !r.deletedAt);
     
-    // 2. Filter records
-    const filteredRecords = activeRecords.filter((rec: RecordEntry) => evaluateFilters(rec, widget.filters, widget.logicalOperator));
+    // 2. Filter records (applying local overrides for interactive filters)
+    const activeFilters = widget.filters.map(f => {
+      if (f.isInteractive && f.fieldKey) {
+        const localVal = interactiveValues.value[widget.id]?.[f.fieldKey];
+        if (localVal !== undefined) {
+          return { ...f, value: localVal };
+        }
+      }
+      return f;
+    });
+
+    let filteredRecords = activeRecords.filter((rec: RecordEntry) => evaluateFilters(rec, activeFilters, widget.logicalOperator));
+    
+    // Zoom/Filter by local start/end dates if collection has a date field
+    if (widget.chartConfig) {
+      const dateField = getDateFieldOfCollection(widget);
+      if (dateField) {
+        const zoom = chartZoomFilters.value[widget.id];
+        if (zoom) {
+          if (zoom.start) {
+            filteredRecords = filteredRecords.filter(r => {
+              const val = r.data[dateField.key];
+              return val && String(val) >= zoom.start;
+            });
+          }
+          if (zoom.end) {
+            filteredRecords = filteredRecords.filter(r => {
+              const val = r.data[dateField.key];
+              return val && String(val) <= zoom.end;
+            });
+          }
+        }
+      }
+    }
     
     // 3. Aggregate data
     if (widget.chartConfig) {
@@ -185,7 +343,7 @@ const loadChartsData = async () => {
             
             if (uniqueVals.size > 0) {
               const valsArray = Array.from(uniqueVals);
-              let joinedVals;
+              let joinedVals = '';
               if (valsArray.length > 5) {
                 joinedVals = valsArray.slice(0, 5).join(', ') + `... (+${valsArray.length - 5} autres)`;
               } else {
@@ -221,6 +379,11 @@ onMounted(() => {
 watch(selectedCollectionId, async (newVal) => {
   if (newVal) {
     localStorage.setItem('bq-metrics-active-collection-id', newVal);
+    chartZoomFilters.value = {}; // Reset local zoom filters when switching collections
+    showZoomControls.value = {}; // Reset zoom panel expansions when switching collections
+    showLegends.value = {}; // Reset local HTML legend toggles when switching collections
+    expandedTitles.value = {}; // Reset local title expansions when switching collections
+    interactiveValues.value = {}; // Reset local interactive filters when switching collections
     await loadChartsData();
   }
 });
@@ -231,14 +394,7 @@ const barChartOptions = computed<ChartOptions<'bar'>>(() => ({
   maintainAspectRatio: false,
   plugins: {
     legend: {
-      position: 'bottom',
-      labels: {
-        color: '#94a3b8',
-        font: {
-          family: 'Inter',
-          size: 11
-        }
-      }
+      display: false
     },
     tooltip: {
       backgroundColor: '#1e293b',
@@ -294,14 +450,7 @@ const lineChartOptions = computed<ChartOptions<'line'>>(() => ({
   maintainAspectRatio: false,
   plugins: {
     legend: {
-      position: 'bottom',
-      labels: {
-        color: '#94a3b8',
-        font: {
-          family: 'Inter',
-          size: 11
-        }
-      }
+      display: false
     },
     tooltip: {
       backgroundColor: '#1e293b',
@@ -357,14 +506,7 @@ const pieChartThemeOptions = computed<ChartOptions<'pie'>>(() => ({
   maintainAspectRatio: false,
   plugins: {
     legend: {
-      position: 'bottom',
-      labels: {
-        color: '#94a3b8',
-        font: {
-          family: 'Inter',
-          size: 11
-        }
-      }
+      display: false
     },
     tooltip: {
       backgroundColor: '#1e293b',
@@ -383,6 +525,73 @@ const pieChartThemeOptions = computed<ChartOptions<'pie'>>(() => ({
     }
   }
 }));
+
+const doughnutOptions = computed<ChartOptions<'doughnut'>>(() => ({
+  responsive: true,
+  maintainAspectRatio: false,
+  cutout: '70%',
+  plugins: {
+    legend: {
+      display: false
+    },
+    tooltip: {
+      backgroundColor: '#1e293b',
+      titleColor: '#ffffff',
+      bodyColor: '#e2e8f0',
+      borderColor: 'rgba(255,255,255,0.08)',
+      borderWidth: 1,
+      padding: 10,
+      callbacks: {
+        title: () => '',
+        label: (context: any) => {
+          const unit = context.dataset.unit ? ` ${context.dataset.unit}` : '';
+          return ` ${context.label} : ${context.formattedValue}${unit}`;
+        }
+      }
+    }
+  }
+}));
+
+const centerTextPlugin = {
+  id: 'centerText',
+  beforeDraw: (chart: any) => {
+    const { ctx, chartArea } = chart;
+    if (!chartArea) return;
+    
+    ctx.save();
+    
+    const dataset = chart.data.datasets[0];
+    if (!dataset || !dataset.data) {
+      ctx.restore();
+      return;
+    }
+    const total = dataset.data.reduce((sum: number, val: number) => sum + (Number(val) || 0), 0);
+    const unit = dataset.unit ? ` ${dataset.unit}` : '';
+    
+    // Compute geometric center of the actual doughnut chart area
+    const centerX = (chartArea.left + chartArea.right) / 2;
+    const centerY = (chartArea.top + chartArea.bottom) / 2;
+    const chartHeight = chartArea.bottom - chartArea.top;
+    
+    // Scale font relatively to chart height
+    const fontSize = (chartHeight / 165).toFixed(2);
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    
+    // Draw "TOTAL" label - shifted slightly higher and made larger
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = `600 ${Number(fontSize) * 0.52}em 'Inter', system-ui, sans-serif`;
+    ctx.fillText('TOTAL', centerX, centerY - (chartHeight * 0.08));
+    
+    // Draw total value - made slightly larger and balanced vertically
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = `800 ${Number(fontSize) * 0.8}em 'Inter', system-ui, sans-serif`;
+    const formattedTotal = Math.round(total * 100) / 100;
+    ctx.fillText(`${formattedTotal}${unit}`, centerX, centerY + (chartHeight * 0.06));
+    
+    ctx.restore();
+  }
+};
 
 // Palette colors for charts
 const chartColors = [
@@ -415,7 +624,8 @@ const getChartData = (widgetId: string, widgetName: string) => {
         hoverOffset: 4,
         data: data.values,
         customTooltips: data.tooltips,
-        unit: unit
+        unit: unit,
+        radius: 120 // Lock outer radius of pie/doughnut circle for geometric sizing consistency
       }
     ]
   };
@@ -502,9 +712,145 @@ defineExpose({
       </div>
 
       <div v-else class="widgets-grid">
-        <div v-for="widget in widgets" :key="widget.id" class="card glass widget-card">
+        <div 
+          v-for="widget in widgets" 
+          :key="widget.id" 
+          :class="['card glass widget-card', ['pie', 'doughnut'].includes(widget.chartType) ? 'circular-chart-card' : '']"
+        >
           <div class="widget-header">
-            <h4>{{ widget.name }}</h4>
+            <h4 
+              :title="widget.name" 
+              @click="toggleTitle(widget.id)"
+              :class="['widget-title', expandedTitles[widget.id] ? 'expanded' : '']"
+            >
+              {{ widget.name }}
+            </h4>
+            
+            <div class="widget-header-actions">
+              <!-- Legend Toggle Button -->
+              <button 
+                v-if="widgetData[widget.id]?.labels?.length > 0" 
+                @click="toggleLegend(widget.id)" 
+                :class="['btn-toggle-legend', showLegends[widget.id] ? 'active' : '']"
+                title="Afficher/Masquer la légende"
+              >
+                Légende
+              </button>
+
+              <!-- Zoom Toggle Button -->
+              <button 
+                v-if="hasControls(widget)" 
+                @click="toggleZoomControls(widget.id)" 
+                :class="['btn-toggle-zoom', showZoomControls[widget.id] || hasActiveFilters(widget) ? 'active' : '']"
+                title="Filtrer et ajuster les contrôles"
+              >
+                Filtrer <span v-if="hasActiveFilters(widget)" class="zoom-badge-dot"></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Collapsible Date Zoom and Interactive Controls Panel -->
+          <div v-if="hasControls(widget) && showZoomControls[widget.id]" class="chart-zoom-panel fade-in">
+            <!-- 1. Global Date Zoom (if date field exists) -->
+            <div v-if="hasDateField(widget)" class="control-row date-zoom-row">
+              <span class="zoom-label">
+                Période 
+                <span class="operator-suffix">({{ getDateFieldOfCollection(widget)?.name }})</span> :
+              </span>
+              <div class="zoom-inputs-group">
+                <input 
+                  type="date" 
+                  v-model="getOrCreateZoom(widget.id).start" 
+                  @change="loadChartsData" 
+                  class="zoom-input" 
+                  title="Date de début"
+                />
+                <span class="zoom-separator">au</span>
+                <input 
+                  type="date" 
+                  v-model="getOrCreateZoom(widget.id).end" 
+                  @change="loadChartsData" 
+                  class="zoom-input" 
+                  title="Date de fin"
+                />
+              </div>
+            </div>
+
+            <!-- 2. Dynamic Interactive Filters -->
+            <div 
+              v-for="filter in widget.filters.filter(f => f.isInteractive)" 
+              :key="filter.fieldKey" 
+              class="control-row interactive-filter-row"
+            >
+              <span class="zoom-label">
+                {{ getFieldConfig(filter.fieldKey)?.name || filter.fieldKey }} 
+                <span class="operator-suffix">({{ getOperatorLabel(filter.operator) }})</span> :
+              </span>
+              
+              <!-- If select field -->
+              <select 
+                v-if="getFieldConfig(filter.fieldKey)?.type === 'select'" 
+                :value="getInteractiveValue(widget.id, filter.fieldKey, filter.value)"
+                @change="e => setInteractiveValue(widget.id, filter.fieldKey, (e.target as HTMLSelectElement).value)"
+                class="zoom-input select-input"
+              >
+                <option v-for="opt in getFieldConfig(filter.fieldKey)?.options" :key="opt" :value="opt">
+                  {{ opt }}
+                </option>
+              </select>
+
+              <!-- If boolean field -->
+              <select 
+                v-else-if="getFieldConfig(filter.fieldKey)?.type === 'boolean'" 
+                :value="getInteractiveValue(widget.id, filter.fieldKey, filter.value)"
+                @change="e => {
+                  const val = (e.target as HTMLSelectElement).value;
+                  setInteractiveValue(widget.id, filter.fieldKey, val === 'true' ? true : val === 'false' ? false : val);
+                }"
+                class="zoom-input select-input"
+              >
+                <option :value="true">✅ Oui</option>
+                <option :value="false">❌ Non</option>
+              </select>
+
+              <!-- If number field -->
+              <input 
+                v-else-if="getFieldConfig(filter.fieldKey)?.type === 'number'" 
+                type="number"
+                :value="getInteractiveValue(widget.id, filter.fieldKey, filter.value)"
+                @input="e => setInteractiveValue(widget.id, filter.fieldKey, Number((e.target as HTMLInputElement).value))"
+                class="zoom-input text-input"
+              />
+
+              <!-- If date field -->
+              <input 
+                v-else-if="getFieldConfig(filter.fieldKey)?.type === 'date'" 
+                type="date"
+                :value="getInteractiveValue(widget.id, filter.fieldKey, filter.value)"
+                @change="e => setInteractiveValue(widget.id, filter.fieldKey, (e.target as HTMLInputElement).value)"
+                class="zoom-input date-input"
+              />
+
+              <!-- Default: text field -->
+              <input 
+                v-else 
+                type="text"
+                :value="getInteractiveValue(widget.id, filter.fieldKey, filter.value)"
+                @input="e => setInteractiveValue(widget.id, filter.fieldKey, (e.target as HTMLInputElement).value)"
+                class="zoom-input text-input"
+                placeholder="Filtrer..."
+              />
+            </div>
+
+            <!-- Clear/Reset Controls button -->
+            <button 
+              v-if="hasActiveFilters(widget)" 
+              @click="resetZoom(widget.id)" 
+              class="btn-reset-zoom"
+              title="Réinitialiser tous les filtres"
+            >
+              Effacer
+            </button>
           </div>
           
           <div class="chart-wrapper">
@@ -518,11 +864,30 @@ defineExpose({
               :data="getChartData(widget.id, widget.name)" 
               :options="pieChartThemeOptions" 
             />
+            <DoughnutChart 
+              v-else-if="widget.chartType === 'doughnut'" 
+              :data="getChartData(widget.id, widget.name)" 
+              :options="doughnutOptions" 
+              :plugins="[centerTextPlugin]"
+            />
             <LineChart 
               v-else-if="widget.chartType === 'line'" 
               :data="getLineChartData(widget.id, widget.name)" 
               :options="lineChartOptions" 
             />
+          </div>
+
+          <!-- HTML Legend for All Charts (Bar, Line, Pie & Doughnut) - Collapsible and hidden by default -->
+          <div v-if="widgetData[widget.id]?.labels?.length > 0 && showLegends[widget.id]" class="chart-html-legend fade-in">
+            <div 
+              v-for="(label, idx) in widgetData[widget.id]?.labels || []" 
+              :key="idx" 
+              class="legend-item"
+            >
+              <span class="legend-color-box" :style="{ backgroundColor: chartColors[idx % chartColors.length] }"></span>
+              <span class="legend-label-text">{{ label }} :</span>
+              <span class="legend-value-text">{{ widgetData[widget.id]?.values[idx] }}{{ getFieldUnit(widget) }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -696,23 +1061,281 @@ defineExpose({
   display: flex;
   flex-direction: column;
   min-height: 380px;
+  min-width: 0; /* Prevent horizontal container expansion */
+  width: 100%;  /* Fill the grid column width exactly */
+
+  &.circular-chart-card {
+    .chart-wrapper {
+      height: 260px; /* Locked height of 260px since HTML legend sits below it */
+    }
+  }
   
   .widget-header {
     margin-bottom: 1rem;
     border-bottom: 1px solid var(--border-color);
     padding-bottom: 0.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
     
-    h4 {
+    .widget-title {
       font-size: 1.05rem;
       font-weight: 700;
       color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+      min-width: 0;
+      margin-right: 0.25rem;
+      cursor: pointer;
+      user-select: none;
+      transition: var(--transition);
+
+      &:hover {
+        color: var(--color-primary);
+      }
+
+      &.expanded {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+      }
+    }
+
+    .widget-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-shrink: 0; /* Keeps buttons side-by-side without squeezing */
     }
   }
   
   .chart-wrapper {
     position: relative;
-    flex: 1;
-    min-height: 280px;
+    height: 280px; /* Locked height to prevent vertical accumulation */
+    width: 100%;   /* Constrain canvas width precisely inside card content */
+    min-width: 0;  /* Allow shrink */
+    overflow: hidden;
+  }
+}
+
+.btn-toggle-zoom, .btn-toggle-legend {
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: var(--transition);
+  position: relative;
+
+  &:hover {
+    border-color: var(--color-primary);
+    color: var(--text-primary);
+    background-color: rgba(59, 130, 246, 0.05);
+  }
+
+  &.active {
+    background-color: rgba(168, 85, 247, 0.1);
+    color: var(--color-accent);
+    border-color: rgba(168, 85, 247, 0.3);
+  }
+}
+
+.zoom-badge-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  background-color: var(--color-danger);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--color-danger);
+}
+
+.chart-zoom-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  background-color: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-color);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+  animation: fadeIn 0.2s ease-out;
+
+  .control-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    
+    &.date-zoom-row {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.4rem;
+      
+      .zoom-inputs-group {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        width: 100%;
+      }
+    }
+  }
+
+  .zoom-label {
+    font-weight: 600;
+    min-width: 140px;
+    text-align: left;
+    
+    .operator-suffix {
+      font-size: 0.75rem;
+      font-weight: normal;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+  }
+
+  .zoom-input {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.8rem;
+    border-radius: var(--radius-sm);
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    width: 180px;
+    color-scheme: dark;
+    outline: none;
+    transition: var(--transition);
+
+    &:focus {
+      border-color: var(--color-primary);
+    }
+
+    &.select-input {
+      cursor: pointer;
+    }
+  }
+
+  .zoom-separator {
+    color: var(--text-muted);
+  }
+
+  .btn-reset-zoom {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    color: var(--color-danger);
+    padding: 0.35rem 0.8rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    transition: var(--transition);
+    align-self: flex-end;
+    margin-top: 0.25rem;
+
+    &:hover {
+      background-color: var(--color-danger);
+      color: #ffffff;
+    }
+  }
+
+  @media (max-width: 576px) {
+    padding: 0.75rem;
+    gap: 0.6rem;
+
+    .control-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.35rem;
+      
+      &.date-zoom-row {
+        .zoom-inputs-group {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 0.35rem;
+        }
+      }
+    }
+
+    .zoom-label {
+      min-width: 100%;
+    }
+
+    .zoom-separator {
+      display: none;
+    }
+
+    .zoom-input {
+      width: 100%;
+      padding: 0.35rem 0.5rem;
+    }
+
+    .btn-reset-zoom {
+      width: 100%;
+      height: 34px;
+      margin-top: 0.25rem;
+      align-self: stretch;
+    }
+  }
+}
+
+.chart-html-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem;
+  margin-top: 0.5rem;
+  max-height: 120px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  padding-top: 0.75rem;
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--border-color);
+    border-radius: 4px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    padding: 0.2rem 0.5rem;
+    border-radius: var(--radius-sm);
+    
+    .legend-color-box {
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
+    .legend-label-text {
+      font-weight: 500;
+    }
+
+    .legend-value-text {
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-left: 0.15rem;
+    }
   }
 }
 </style>

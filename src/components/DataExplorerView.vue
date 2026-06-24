@@ -33,7 +33,7 @@ const pageSize = ref(50);
 // New View Save state
 const showSaveViewModal = ref(false);
 const newViewName = ref('');
-const chartType = ref<'none' | 'bar' | 'pie' | 'line'>('none');
+const chartType = ref<'none' | 'bar' | 'pie' | 'line' | 'doughnut'>('none');
 const xAxisKey = ref('');
 const yAxisKey = ref('');
 const aggregateType = ref<'sum' | 'avg' | 'count' | 'monthly_avg' | 'balance' | 'moving_avg' | 'monthly_sum' | 'monthly_count' | 'usage_since_reset'>('sum');
@@ -68,9 +68,9 @@ const openSaveViewModal = () => {
   showSaveViewModal.value = true;
 };
 
-// Reset tooltip fields when chart type is changed to pie or none
+// Reset tooltip fields when chart type is changed to pie, doughnut or none
 watch(chartType, (newVal) => {
-  if (newVal === 'pie' || newVal === 'none') {
+  if (newVal === 'pie' || newVal === 'doughnut' || newVal === 'none') {
     tooltipFields.value = [];
   }
 });
@@ -937,6 +937,17 @@ defineExpose({
               />
             </template>
 
+            <!-- Interactive Filter Toggle -->
+            <button 
+              v-if="filter.operator !== 'is_empty' && filter.operator !== 'is_not_empty'"
+              type="button"
+              @click="filter.isInteractive = !filter.isInteractive" 
+              :class="['btn-interactive-filter', filter.isInteractive ? 'active' : '']"
+              title="Rendre ce filtre interactif sur le graphique"
+            >
+              <SlidersHorizontal class="btn-icon-xs" />
+            </button>
+
             <!-- Remove Filter -->
             <button @click="removeFilterRow(index)" class="btn-remove-row" title="Supprimer la condition">
               <X class="btn-row-x" />
@@ -1268,6 +1279,7 @@ defineExpose({
                   <option value="bar">Graphique en barres</option>
                   <option value="line">Graphique en lignes (évolution)</option>
                   <option value="pie">Diagramme circulaire (répartition)</option>
+                  <option value="doughnut">Diagramme en anneau (Donut)</option>
                 </select>
               </div>
 
@@ -1766,6 +1778,14 @@ defineExpose({
   flex: 1;
 }
 
+.filter-date-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 150px;
+}
+
 .btn-remove-row {
   background: none;
   border: none;
@@ -1793,6 +1813,35 @@ defineExpose({
   }
 }
 
+.btn-interactive-filter {
+  background: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  transition: var(--transition);
+  
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+  }
+  
+  &.active {
+    background-color: rgba(168, 85, 247, 0.1);
+    color: var(--color-accent);
+    border-color: rgba(168, 85, 247, 0.25);
+  }
+
+  .btn-icon-xs {
+    width: 14px;
+    height: 14px;
+  }
+}
+
 .filters-actions {
   display: flex;
   justify-content: space-between;
@@ -1803,6 +1852,23 @@ defineExpose({
   .save-actions {
     display: flex;
     gap: 0.5rem;
+  }
+
+  @media (max-width: 576px) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+
+    .btn {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .save-actions {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.5rem;
+    }
   }
 }
 
@@ -2132,6 +2198,16 @@ defineExpose({
   padding-top: 1.25rem;
   margin-top: 1.5rem;
   flex-wrap: wrap;
+
+  @media (max-width: 576px) {
+    flex-direction: column;
+    align-items: stretch;
+
+    .btn {
+      width: 100%;
+      justify-content: center;
+    }
+  }
 }
 
 /* Dynamic Forms components styling */
