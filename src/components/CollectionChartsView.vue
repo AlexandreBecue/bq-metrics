@@ -42,7 +42,7 @@ const emit = defineEmits(['navigate']);
 const collections = ref<CollectionSchema[]>([]);
 const selectedCollectionId = ref<string>(localStorage.getItem('bq-metrics-active-collection-id') || '');
 const widgets = ref<SavedView[]>([]);
-const widgetData = ref<Record<string, { labels: string[]; values: number[]; tooltips?: string[][] }>>({});
+const widgetData = ref<Record<string, { labels: string[]; values: number[]; values2?: number[]; tooltips?: string[][] }>>({});
 
 const formatValue = (val: any, fieldConfig?: any) => {
   if (val === undefined || val === null) return '';
@@ -93,7 +93,7 @@ const loadChartsData = async () => {
   widgets.value = filteredWidgets.sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
   
   // Fetch and prepare data for each widget
-  const tempWidgetData: Record<string, { labels: string[]; values: number[]; tooltips?: string[][] }> = {};
+  const tempWidgetData: Record<string, { labels: string[]; values: number[]; values2?: number[]; tooltips?: string[][] }> = {};
   
   for (const widget of widgets.value) {
     // 1. Get raw records for this collection
@@ -105,11 +105,45 @@ const loadChartsData = async () => {
     
     // 3. Aggregate data
     if (widget.chartConfig) {
+      // Resolve relation IDs to names for the X-axis key if it's a relation field
+      let idToNameMap: Record<string, string> | undefined = undefined;
+      const xAxisField = activeCollection.value?.fields.find(f => f.key === widget.chartConfig!.xAxisKey);
+      
+      if (xAxisField?.type === 'relation' && xAxisField.relatedCollectionId) {
+        const relatedRecords = await db.records.where('collectionId').equals(xAxisField.relatedCollectionId).toArray();
+        const activeRelatedRecords = relatedRecords.filter(r => !r.deletedAt);
+        const targetCol = await db.collections.get(xAxisField.relatedCollectionId);
+        const primaryKey = targetCol?.primaryFieldKey || 'title';
+        
+        idToNameMap = {};
+        for (const r of activeRelatedRecords) {
+          idToNameMap[r.id!] = String(r.data[primaryKey] || r.id);
+        }
+      }
+
+      // If aggregateType is usage_since_reset, we load records from the related collection pointing to us
+      let extraRecords: RecordEntry[] | undefined = undefined;
+      if (widget.chartConfig.aggregate === 'usage_since_reset') {
+        const currentCollectionId = widget.collectionId;
+        const allCols = await db.collections.toArray();
+        // Find a collection that has a relation field pointing to our current collection
+        const relatedColSchema = allCols.find(c => 
+          !c.deletedAt && c.fields.some(f => f.type === 'relation' && f.relatedCollectionId === currentCollectionId)
+        );
+        
+        if (relatedColSchema) {
+          const logRecords = await db.records.where('collectionId').equals(relatedColSchema.id).toArray();
+          extraRecords = logRecords.filter(r => !r.deletedAt);
+        }
+      }
+
       const aggResult = aggregateData(
         filteredRecords,
         widget.chartConfig.xAxisKey,
         widget.chartConfig.yAxisKey,
-        widget.chartConfig.aggregate
+        widget.chartConfig.aggregate,
+        idToNameMap,
+        extraRecords
       );
       
       // Build custom tooltips for each label/point
@@ -121,11 +155,16 @@ const loadChartsData = async () => {
           // Find records contributing to this aggregated group/point
           const matchingRecs = filteredRecords.filter(rec => {
             const rawXVal = rec.data[widget.chartConfig!.xAxisKey];
-            let recLabel = 'N/A';
             if (rawXVal !== undefined && rawXVal !== null) {
-              recLabel = Array.isArray(rawXVal) ? rawXVal.join(', ') : String(rawXVal);
+              if (Array.isArray(rawXVal)) {
+                const resolvedNames = rawXVal.map(id => idToNameMap?.[id] || id);
+                return resolvedNames.includes(item.label) || resolvedNames.join(', ') === item.label;
+              } else {
+                const resolvedName = idToNameMap?.[rawXVal] || String(rawXVal);
+                return resolvedName === item.label;
+              }
             }
-            return recLabel === item.label;
+            return item.label === 'N/A';
           });
           
           const pointTooltipLines: string[] = [];
@@ -145,7 +184,13 @@ const loadChartsData = async () => {
             });
             
             if (uniqueVals.size > 0) {
-              const joinedVals = Array.from(uniqueVals).join(', ');
+              const valsArray = Array.from(uniqueVals);
+              let joinedVals;
+              if (valsArray.length > 5) {
+                joinedVals = valsArray.slice(0, 5).join(', ') + `... (+${valsArray.length - 5} autres)`;
+              } else {
+                joinedVals = valsArray.join(', ');
+              }
               pointTooltipLines.push(`${f.name} : ${joinedVals}`);
             }
           });
@@ -159,6 +204,7 @@ const loadChartsData = async () => {
       tempWidgetData[widget.id] = {
         labels: aggResult.map(r => r.label),
         values: aggResult.map(r => r.value),
+        values2: aggResult.map(r => r.value2 || 0),
         tooltips
       };
     }
@@ -353,7 +399,7 @@ const borderColors = [
 ];
 
 const getChartData = (widgetId: string, widgetName: string) => {
-  const data = widgetData.value[widgetId] || { labels: [], values: [], tooltips: [] };
+  const data = widgetData.value[widgetId] || { labels: [], values: [], values2: [], tooltips: [] };
   const widget = widgets.value.find(w => w.id === widgetId);
   const yField = activeCollection.value?.fields.find(f => f.key === widget?.chartConfig?.yAxisKey);
   const unit = yField?.unit || '';

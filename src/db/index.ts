@@ -1,6 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import { ref } from 'vue';
-import { evaluateFormula } from './queries';
+import { evaluateFormula } from './queries.ts';
 
 export type DBStatus = 'ready' | 'loading' | 'saving' | 'error';
 export const dbStatus = ref<DBStatus>('ready');
@@ -64,7 +64,7 @@ export interface SavedView {
   chartConfig?: {
     xAxisKey: string;        // Field key for X axis
     yAxisKey: string;        // Field key for Y axis, or "count"
-    aggregate: 'sum' | 'avg' | 'count' | 'monthly_avg' | 'balance';
+    aggregate: 'sum' | 'avg' | 'count' | 'monthly_avg' | 'balance' | 'moving_avg' | 'monthly_sum' | 'monthly_count' | 'usage_since_reset';
     tooltipFields?: string[]; // Field keys to display in chart hover tooltip
   };
   createdAt: number;

@@ -1,4 +1,4 @@
-import { type RecordEntry, type SavedFilter } from './index';
+import { type RecordEntry, type SavedFilter } from './index.ts';
 
 /**
  * Evaluates whether a record matches a list of filters based on the logical operator (AND / OR).
@@ -98,52 +98,104 @@ export function aggregateData(
   records: RecordEntry[],
   xAxisKey: string,
   yAxisKey: string,
-  aggregateType: 'sum' | 'avg' | 'count' | 'monthly_avg' | 'balance'
-): { label: string; value: number }[] {
-  if (aggregateType === 'balance') {
-    // Specialized financial double-entry bookkeeping balance aggregator
-    const groups: Record<string, number> = {};
+  aggregateType: 'sum' | 'avg' | 'count' | 'monthly_avg' | 'balance' | 'moving_avg' | 'monthly_sum' | 'monthly_count' | 'usage_since_reset',
+  idToNameMap?: Record<string, string>,
+  extraRecords?: RecordEntry[]
+): { label: string; value: number; value2?: number }[] {
 
-    records.forEach(rec => {
-      const type = rec.data.type; // "Entrée", "Sortie", "Interne"
-      const yVal = Number(rec.data[yAxisKey]);
-      const validYVal = isNaN(yVal) ? 0 : yVal;
+  if (aggregateType === 'usage_since_reset' && extraRecords && extraRecords.length > 0 && records.length > 0) {
+    // Dynamically discover date field in extraRecords matching ISO format (default to 'date')
+    const dateField = Object.keys(extraRecords[0].data).find(k => 
+      /^\d{4}-\d{2}-\d{2}$/.test(String(extraRecords[0].data[k] || ''))
+    ) || 'date';
+
+    // Dynamically discover the relation field key in extraRecords referencing any source record ID
+    let relationFieldKey: string | undefined = undefined;
+    for (const sourceRecord of records) {
+      const sourceId = sourceRecord.id;
+      const firstWithId = extraRecords.find(r => {
+        return Object.values(r.data).some(val => 
+          Array.isArray(val) ? val.includes(sourceId) : val === sourceId
+        );
+      });
       
-      const label = String(rec.data[xAxisKey] || 'N/A');
-
-      if (!groups[label]) {
-        groups[label] = 0;
+      if (firstWithId) {
+        relationFieldKey = Object.keys(firstWithId.data).find(k => {
+          const val = firstWithId.data[k];
+          return Array.isArray(val) ? val.includes(sourceId) : val === sourceId;
+        });
+        if (relationFieldKey) break;
       }
+    }
 
-      if (type === 'Entrée') {
-        groups[label] += validYVal;
-      } else if (type === 'Sortie') {
-        groups[label] -= validYVal;
-      } else if (type === 'Interne') {
-        // Source account loses funds
-        groups[label] -= validYVal;
+    if (relationFieldKey) {
+      return records.map(sourceRecord => {
+        // Label is the primary key name (xAxisKey)
+        const label = String(sourceRecord.data[xAxisKey] || sourceRecord.id || 'N/A');
+        // Reset limit date is the Y-axis value (yAxisKey)
+        const resetDate = sourceRecord.data[yAxisKey];
+        
+        let count = 0;
+        extraRecords.forEach(logRecord => {
+          const relatedIds = logRecord.data[relationFieldKey] || [];
+          const isRelated = Array.isArray(relatedIds) ? relatedIds.includes(sourceRecord.id) : relatedIds === sourceRecord.id;
+          const logDate = logRecord.data[dateField];
 
-        // Destination account gains funds
-        const destination = String(rec.data.partenaire || '');
-        if (destination && destination !== 'N/A') {
-          if (!groups[destination]) {
-            groups[destination] = 0;
+          if (isRelated) {
+            if (resetDate) {
+              if (logDate && logDate >= resetDate) {
+                count++;
+              }
+            } else {
+              count++;
+            }
           }
-          groups[destination] += validYVal;
-        }
-      } else {
-        // Fallback standard aggregation behavior (add up)
-        groups[label] += validYVal;
-      }
-    });
+        });
 
-    return Object.entries(groups).map(([label, value]) => ({
-      label,
-      value: Math.round(value * 100) / 100
-    }));
+        return { label, value: count };
+      });
+    }
   }
 
   const groups: Record<string, number[]> = {};
+
+  const addGroup = (rawLabel: string, yVal: number) => {
+    const labelStr = idToNameMap && idToNameMap[rawLabel] ? idToNameMap[rawLabel] : rawLabel;
+    if (!groups[labelStr]) {
+      groups[labelStr] = [];
+    }
+    groups[labelStr].push(yVal);
+  };
+
+  records.forEach(rec => {
+    const rawXVal = rec.data[xAxisKey];
+    let yVal = Number(rec.data[yAxisKey]);
+    if (yAxisKey === 'count') {
+      yVal = 1;
+    }
+    const validYVal = isNaN(yVal) ? 0 : yVal;
+
+    let xVals: string[] = [];
+    if (rawXVal !== undefined && rawXVal !== null) {
+      if (Array.isArray(rawXVal)) {
+        xVals = rawXVal.map(String);
+      } else {
+        xVals = [String(rawXVal)];
+      }
+    }
+
+    if (xVals.length === 0) {
+      xVals = ['N/A'];
+    }
+
+    xVals.forEach(xVal => {
+      let label = xVal;
+      if ((aggregateType === 'monthly_sum' || aggregateType === 'monthly_count') && /^\d{4}-\d{2}/.test(xVal)) {
+        label = xVal.substring(0, 7);
+      }
+      addGroup(label, validYVal);
+    });
+  });
 
   // If monthly_avg, count the unique months (YYYY-MM) present in the entire filtered records list
   const uniqueMonths = new Set<string>();
@@ -158,34 +210,12 @@ export function aggregateData(
   }
   const monthCount = Math.max(1, uniqueMonths.size);
 
-  // Group values
-  records.forEach(rec => {
-    const rawXVal = rec.data[xAxisKey];
-    // Formatter for dates or tags to look nice as X labels
-    let label = 'N/A';
-    if (rawXVal !== undefined && rawXVal !== null) {
-      if (Array.isArray(rawXVal)) {
-        label = rawXVal.join(', ');
-      } else {
-        label = String(rawXVal);
-      }
-    }
-
-    const yVal = Number(rec.data[yAxisKey]);
-    const validYVal = isNaN(yVal) ? 0 : yVal;
-
-    if (!groups[label]) {
-      groups[label] = [];
-    }
-    groups[label].push(validYVal);
-  });
-
   // Aggregate groups
   const result = Object.entries(groups).map(([label, values]) => {
     let value = 0;
-    if (aggregateType === 'count') {
+    if (aggregateType === 'count' || aggregateType === 'monthly_count') {
       value = values.length;
-    } else if (aggregateType === 'sum') {
+    } else if (aggregateType === 'sum' || aggregateType === 'monthly_sum') {
       value = values.reduce((sum, v) => sum + v, 0);
     } else if (aggregateType === 'avg') {
       const sum = values.reduce((sum, v) => sum + v, 0);
@@ -201,6 +231,91 @@ export function aggregateData(
     return { label, value };
   });
 
+  if (aggregateType === 'balance') {
+    // 1. Discover the 'type' field key and its option meanings (Inflow/Outflow/Transfer)
+    let typeFieldKey = 'type';
+    let inflowOption = 'Entrée';
+    let outflowOption = 'Sortie';
+    let transferOption = 'Interne';
+
+    const sampleRecord = records.find(r => r.data.type || Object.keys(r.data).some(k => ['entrée', 'sortie', 'interne', 'in', 'out', 'transfer'].includes(String(r.data[k]).toLowerCase())));
+    if (sampleRecord) {
+      const discoveredKey = Object.keys(sampleRecord.data).find(k => {
+        const val = String(sampleRecord.data[k]).toLowerCase();
+        return ['entrée', 'sortie', 'interne', 'in', 'out', 'transfer', '+', '-'].includes(val);
+      });
+      if (discoveredKey) {
+        typeFieldKey = discoveredKey;
+        records.forEach(r => {
+          const val = String(r.data[typeFieldKey] || '').toLowerCase();
+          if (['entrée', 'in', '+'].includes(val)) inflowOption = String(r.data[typeFieldKey]);
+          else if (['sortie', 'out', '-'].includes(val)) outflowOption = String(r.data[typeFieldKey]);
+          else if (['interne', 'transfer', 'virement'].includes(val)) transferOption = String(r.data[typeFieldKey]);
+        });
+      }
+    }
+
+    // 2. Discover the 'destination' field key (for transfers)
+    const allSourceLabels = new Set<string>();
+    records.forEach(r => {
+      if (r.data[xAxisKey]) {
+        allSourceLabels.add(String(r.data[xAxisKey]));
+      }
+    });
+
+    let destinationFieldKey = 'partenaire'; // fallback default
+    const matchingDestKey = Object.keys(records[0]?.data || {}).find(k => {
+      if (k === xAxisKey || k === typeFieldKey) return false;
+      return records.some(r => {
+        const val = String(r.data[k] || '');
+        return val && val !== 'N/A' && allSourceLabels.has(val) && val !== String(r.data[xAxisKey]);
+      });
+    });
+    if (matchingDestKey) {
+      destinationFieldKey = matchingDestKey;
+    }
+
+    // 3. Compute balances
+    const balGroups: Record<string, number> = {};
+
+    records.forEach(rec => {
+      const typeVal = rec.data[typeFieldKey];
+      const yVal = Number(rec.data[yAxisKey]);
+      const validYVal = isNaN(yVal) ? 0 : yVal;
+      
+      const rawX = rec.data[xAxisKey];
+      const label = idToNameMap && idToNameMap[rawX] ? idToNameMap[rawX] : String(rawX || 'N/A');
+
+      if (!balGroups[label]) {
+        balGroups[label] = 0;
+      }
+
+      if (typeVal === inflowOption) {
+        balGroups[label] += validYVal;
+      } else if (typeVal === outflowOption) {
+        balGroups[label] -= validYVal;
+      } else if (typeVal === transferOption) {
+        balGroups[label] -= validYVal;
+        const destination = String(rec.data[destinationFieldKey] || '');
+        if (destination && destination !== 'N/A') {
+          const destLabel = idToNameMap && idToNameMap[destination] ? idToNameMap[destination] : destination;
+          if (!balGroups[destLabel]) {
+            balGroups[destLabel] = 0;
+          }
+          balGroups[destLabel] += validYVal;
+        }
+      } else {
+        // Fallback standard aggregation behavior (add up)
+        balGroups[label] += validYVal;
+      }
+    });
+
+    return Object.entries(balGroups).map(([label, value]) => ({
+      label,
+      value: Math.round(value * 100) / 100
+    }));
+  }
+
   // Sort result chronologically for ISO dates, alphabetically/numerically for other labels
   const dateRegex = /^\d{4}-\d{2}(-\d{2})?$/;
   result.sort((a, b) => {
@@ -209,6 +324,18 @@ export function aggregateData(
     }
     return a.label.localeCompare(b.label, 'fr', { numeric: true, sensitivity: 'base' });
   });
+
+  if (aggregateType === 'moving_avg') {
+    return result.map((item, idx, arr) => {
+      const start = Math.max(0, idx - 4);
+      const subset = arr.slice(start, idx + 1);
+      const avgSum = subset.reduce((acc, x) => acc + x.value, 0);
+      return {
+        label: item.label,
+        value: Math.round((avgSum / subset.length) * 100) / 100
+      };
+    });
+  }
 
   return result;
 }

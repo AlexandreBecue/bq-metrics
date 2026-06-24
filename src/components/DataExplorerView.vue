@@ -36,7 +36,7 @@ const newViewName = ref('');
 const chartType = ref<'none' | 'bar' | 'pie' | 'line'>('none');
 const xAxisKey = ref('');
 const yAxisKey = ref('');
-const aggregateType = ref<'sum' | 'avg' | 'count' | 'monthly_avg' | 'balance'>('sum');
+const aggregateType = ref<'sum' | 'avg' | 'count' | 'monthly_avg' | 'balance' | 'moving_avg' | 'monthly_sum' | 'monthly_count' | 'usage_since_reset'>('sum');
 const tooltipFields = ref<string[]>([]);
 
 const openSaveViewModal = () => {
@@ -1292,13 +1292,18 @@ defineExpose({
                   </select>
                 </div>
 
-                <div class="form-group" v-if="yAxisKey !== 'count'">
+                <div class="form-group">
                   <label for="aggregate">Calcul d'agrégation</label>
                   <select id="aggregate" v-model="aggregateType" class="form-control">
-                    <option value="sum">Somme des valeurs</option>
-                    <option value="avg">Moyenne</option>
-                    <option value="monthly_avg">Somme Moyenne Mensuelle</option>
-                    <option value="balance">Solde financier net (Entrées - Sorties)</option>
+                    <option v-if="yAxisKey === 'count'" value="count">Nombre de lignes (Simple count)</option>
+                    <option v-if="yAxisKey !== 'count'" value="sum">Somme des valeurs</option>
+                    <option v-if="yAxisKey !== 'count'" value="avg">Moyenne</option>
+                    <option v-if="yAxisKey !== 'count'" value="monthly_avg">Somme Moyenne Mensuelle</option>
+                    <option v-if="yAxisKey !== 'count'" value="balance">Solde financier net (Entrées - Sorties)</option>
+                    <option v-if="yAxisKey !== 'count'" value="moving_avg">Moyenne Mobile (5 séances)</option>
+                    <option v-if="yAxisKey !== 'count'" value="monthly_sum">Regroupement mensuel (Somme)</option>
+                    <option value="monthly_count">Regroupement mensuel (Nombre de lignes)</option>
+                    <option value="usage_since_reset">Utilisations depuis reset/entretien (Date axe Y)</option>
                   </select>
                 </div>
 
