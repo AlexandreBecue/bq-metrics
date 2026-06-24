@@ -6,6 +6,7 @@ import DataExplorerView from './components/DataExplorerView.vue';
 import CollectionChartsView from './components/CollectionChartsView.vue';
 import CollectionsManagerView from './components/CollectionsManagerView.vue';
 import SettingsView from './components/SettingsView.vue';
+import ReloadPrompt from './components/ReloadPrompt.vue';
 import { 
   LayoutDashboard, TableProperties, Database, Settings, Flame, Menu, X, BarChart3
 } from '@lucide/vue';
@@ -297,6 +298,9 @@ const handleOpenCharts = async (colId: string) => {
         <span>Params</span>
       </button>
     </nav>
+
+    <!-- PWA Reload Prompt for manual updates -->
+    <ReloadPrompt />
   </div>
 </template>
 
