@@ -557,8 +557,15 @@ const formatValue = (val: any, fieldConfig?: any) => {
   if (fieldConfig?.type === 'date') {
     return formatToFrenchDate(String(val));
   }
-  if (fieldConfig?.type === 'number' && fieldConfig?.unit) {
-    return `${val} ${fieldConfig.unit}`;
+  if (fieldConfig?.type === 'number') {
+    let formattedVal = String(val);
+    if (fieldConfig.decimals !== undefined && fieldConfig.decimals !== null && fieldConfig.decimals !== '') {
+      const num = Number(val);
+      if (!isNaN(num)) {
+        formattedVal = num.toFixed(Number(fieldConfig.decimals));
+      }
+    }
+    return fieldConfig.unit ? `${formattedVal} ${fieldConfig.unit}` : formattedVal;
   }
   if (fieldConfig?.type === 'relation' && fieldConfig?.relatedCollectionId) {
     const targetColId = fieldConfig.relatedCollectionId;
