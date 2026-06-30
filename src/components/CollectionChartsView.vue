@@ -72,6 +72,8 @@ const chartZoomFilters = ref<Record<string, { start: string; end: string }>>({})
 const showZoomControls = ref<Record<string, boolean>>({});
 // Controls whether the HTML legend is expanded: { [widgetId]: boolean }
 const showLegends = ref<Record<string, boolean>>({});
+// Controls whether the widget title is expanded to wrap on mobile: { [widgetId]: boolean }
+const expandedTitles = ref<Record<string, boolean>>({});
 
 const toggleZoomControls = (widgetId: string) => {
   showZoomControls.value[widgetId] = !showZoomControls.value[widgetId];
@@ -79,6 +81,10 @@ const toggleZoomControls = (widgetId: string) => {
 
 const toggleLegend = (widgetId: string) => {
   showLegends.value[widgetId] = !showLegends.value[widgetId];
+};
+
+const toggleTitle = (widgetId: string) => {
+  expandedTitles.value[widgetId] = !expandedTitles.value[widgetId];
 };
 
 const getOrCreateZoom = (widgetId: string) => {
@@ -381,6 +387,7 @@ watch(selectedCollectionId, async (newVal) => {
     chartZoomFilters.value = {}; // Reset local zoom filters when switching collections
     showZoomControls.value = {}; // Reset zoom panel expansions when switching collections
     showLegends.value = {}; // Reset local HTML legend toggles when switching collections
+    expandedTitles.value = {}; // Reset local title expansions when switching collections
     interactiveValues.value = {}; // Reset local interactive filters when switching collections
     await loadChartsData();
   }
@@ -716,7 +723,13 @@ defineExpose({
           :class="['card glass widget-card', ['pie', 'doughnut'].includes(widget.chartType) ? 'circular-chart-card' : '']"
         >
           <div class="widget-header">
-            <h4 :title="widget.name">{{ widget.name }}</h4>
+            <h4 
+              :title="widget.name" 
+              @click="toggleTitle(widget.id)"
+              :class="['widget-title', expandedTitles[widget.id] ? 'expanded' : '']"
+            >
+              {{ widget.name }}
+            </h4>
             
             <div class="widget-header-actions">
               <!-- Legend Toggle Button -->
@@ -1071,7 +1084,7 @@ defineExpose({
     align-items: center;
     gap: 0.5rem;
     
-    h4 {
+    .widget-title {
       font-size: 1.05rem;
       font-weight: 700;
       color: var(--text-primary);
@@ -1081,6 +1094,19 @@ defineExpose({
       flex: 1;
       min-width: 0;
       margin-right: 0.25rem;
+      cursor: pointer;
+      user-select: none;
+      transition: var(--transition);
+
+      &:hover {
+        color: var(--color-primary);
+      }
+
+      &.expanded {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+      }
     }
 
     .widget-header-actions {
