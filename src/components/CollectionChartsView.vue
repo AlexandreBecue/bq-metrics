@@ -45,6 +45,16 @@ const selectedCollectionId = ref<string>(localStorage.getItem('bq-metrics-active
 const widgets = ref<SavedView[]>([]);
 const widgetData = ref<Record<string, { labels: string[]; values: number[]; values2?: number[]; tooltips?: string[][] }>>({});
 
+const formatChartValue = (raw: any, decimals?: any, fallback?: string) => {
+  if (decimals !== undefined && decimals !== null && decimals !== '') {
+    const num = Number(raw);
+    if (!isNaN(num)) {
+      return num.toFixed(Number(decimals));
+    }
+  }
+  return fallback !== undefined ? fallback : String(raw);
+};
+
 const formatValue = (val: any, fieldConfig?: any) => {
   if (val === undefined || val === null) return '';
   if (fieldConfig?.type === 'boolean') {
@@ -56,8 +66,15 @@ const formatValue = (val: any, fieldConfig?: any) => {
   if (fieldConfig?.type === 'date') {
     return formatToFrenchDate(String(val));
   }
-  if (fieldConfig?.type === 'number' && fieldConfig?.unit) {
-    return `${val} ${fieldConfig.unit}`;
+  if (fieldConfig?.type === 'number') {
+    let formattedVal = String(val);
+    if (fieldConfig.decimals !== undefined && fieldConfig.decimals !== null && fieldConfig.decimals !== '') {
+      const num = Number(val);
+      if (!isNaN(num)) {
+        formattedVal = num.toFixed(Number(fieldConfig.decimals));
+      }
+    }
+    return fieldConfig.unit ? `${formattedVal} ${fieldConfig.unit}` : formattedVal;
   }
   return String(val);
 };
@@ -147,11 +164,6 @@ const getDateFieldOfCollection = (widget: SavedView) => {
 
 const hasDateField = (widget: SavedView) => {
   return getDateFieldOfCollection(widget) !== undefined;
-};
-
-const getFieldUnit = (widget: SavedView) => {
-  const yField = activeCollection.value?.fields.find(f => f.key === widget.chartConfig?.yAxisKey);
-  return yField?.unit ? ` ${yField.unit}` : '';
 };
 
 const hasControls = (widget: SavedView) => {
@@ -411,7 +423,8 @@ const barChartOptions = computed<ChartOptions<'bar'>>(() => ({
       callbacks: {
         label: (context: any) => {
           const unit = context.dataset.unit ? ` ${context.dataset.unit}` : '';
-          const lines = [` ${context.formattedValue}${unit}`];
+          const val = formatChartValue(context.raw, context.dataset.decimals, context.formattedValue);
+          const lines = [` ${val}${unit}`];
           const customTooltip = context.dataset.customTooltips?.[context.dataIndex];
           if (customTooltip && customTooltip.length > 0) {
             lines.push(''); // elegant spacer
@@ -467,7 +480,8 @@ const lineChartOptions = computed<ChartOptions<'line'>>(() => ({
       callbacks: {
         label: (context: any) => {
           const unit = context.dataset.unit ? ` ${context.dataset.unit}` : '';
-          const lines = [` ${context.formattedValue}${unit}`];
+          const val = formatChartValue(context.raw, context.dataset.decimals, context.formattedValue);
+          const lines = [` ${val}${unit}`];
           const customTooltip = context.dataset.customTooltips?.[context.dataIndex];
           if (customTooltip && customTooltip.length > 0) {
             lines.push(''); // elegant spacer
@@ -524,7 +538,8 @@ const pieChartThemeOptions = computed<ChartOptions<'pie'>>(() => ({
         title: () => '',
         label: (context: any) => {
           const unit = context.dataset.unit ? ` ${context.dataset.unit}` : '';
-          return ` ${context.label} : ${context.formattedValue}${unit}`;
+          const val = formatChartValue(context.raw, context.dataset.decimals, context.formattedValue);
+          return ` ${context.label} : ${val}${unit}`;
         }
       }
     }
@@ -550,7 +565,8 @@ const doughnutOptions = computed<ChartOptions<'doughnut'>>(() => ({
         title: () => '',
         label: (context: any) => {
           const unit = context.dataset.unit ? ` ${context.dataset.unit}` : '';
-          return ` ${context.label} : ${context.formattedValue}${unit}`;
+          const val = formatChartValue(context.raw, context.dataset.decimals, context.formattedValue);
+          return ` ${context.label} : ${val}${unit}`;
         }
       }
     }
@@ -591,7 +607,12 @@ const centerTextPlugin = {
     // Draw total value - made slightly larger and balanced vertically
     ctx.fillStyle = '#f8fafc';
     ctx.font = `800 ${Number(fontSize) * 0.8}em 'Inter', system-ui, sans-serif`;
-    const formattedTotal = Math.round(total * 100) / 100;
+    let formattedTotal = '';
+    if (dataset.decimals !== undefined && dataset.decimals !== null && dataset.decimals !== '') {
+      formattedTotal = total.toFixed(Number(dataset.decimals));
+    } else {
+      formattedTotal = String(Math.round(total * 100) / 100);
+    }
     ctx.fillText(`${formattedTotal}${unit}`, centerX, centerY + (chartHeight * 0.06));
     
     ctx.restore();
@@ -617,6 +638,7 @@ const getChartData = (widgetId: string, widgetName: string) => {
   const widget = widgets.value.find(w => w.id === widgetId);
   const yField = activeCollection.value?.fields.find(f => f.key === widget?.chartConfig?.yAxisKey);
   const unit = yField?.unit || '';
+  const decimals = yField?.decimals;
 
   return {
     labels: data.labels,
@@ -630,6 +652,7 @@ const getChartData = (widgetId: string, widgetName: string) => {
         data: data.values,
         customTooltips: data.tooltips,
         unit: unit,
+        decimals: decimals,
         radius: 120 // Lock outer radius of pie/doughnut circle for geometric sizing consistency
       }
     ]
@@ -641,6 +664,7 @@ const getLineChartData = (widgetId: string, widgetName: string) => {
   const widget = widgets.value.find(w => w.id === widgetId);
   const yField = activeCollection.value?.fields.find(f => f.key === widget?.chartConfig?.yAxisKey);
   const unit = yField?.unit || '';
+  const decimals = yField?.decimals;
 
   return {
     labels: data.labels,
@@ -657,7 +681,8 @@ const getLineChartData = (widgetId: string, widgetName: string) => {
         tension: 0.3,
         data: data.values,
         customTooltips: data.tooltips,
-        unit: unit
+        unit: unit,
+        decimals: decimals
       }
     ]
   };
@@ -891,7 +916,7 @@ defineExpose({
             >
               <span class="legend-color-box" :style="{ backgroundColor: chartColors[idx % chartColors.length] }"></span>
               <span class="legend-label-text">{{ label }} :</span>
-              <span class="legend-value-text">{{ widgetData[widget.id]?.values[idx] }}{{ getFieldUnit(widget) }}</span>
+              <span class="legend-value-text">{{ formatValue(widgetData[widget.id]?.values[idx], getFieldConfig(widget.chartConfig?.yAxisKey || '')) }}</span>
             </div>
           </div>
         </div>

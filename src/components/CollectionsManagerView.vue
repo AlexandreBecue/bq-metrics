@@ -588,6 +588,19 @@ const handleDelete = async (colId: string) => {
                     />
                   </div>
 
+                  <!-- Decimals Config (Only for 'number' type) -->
+                  <div v-if="field.type === 'number'" class="decimals-config">
+                    <label>Nombre de décimales (optionnel)</label>
+                    <input 
+                      v-model.number="field.decimals"
+                      type="number"
+                      min="0"
+                      max="10"
+                      class="form-control btn-sm" 
+                      placeholder="Ex: 2"
+                    />
+                  </div>
+
                   <!-- Relation Config (Only for 'relation' type) -->
                   <div v-if="field.type === 'relation'" class="relation-config">
                     <div class="form-group mb-2">
@@ -911,7 +924,7 @@ const handleDelete = async (colId: string) => {
   }
 }
 
-.unit-config, .relation-config {
+.unit-config, .decimals-config, .relation-config {
   background-color: rgba(255, 255, 255, 0.01);
   border-top: 1px dashed var(--border-color);
   padding-top: 0.75rem;

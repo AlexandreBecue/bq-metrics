@@ -16,6 +16,7 @@ export interface FieldConfig {
   required: boolean;
   options?: string[];        // For 'select' type
   unit?: string;             // Custom unit for numeric fields, e.g., "€", "L / km"
+  decimals?: number;         // Number of decimals to display for numeric fields
   relatedCollectionId?: string; // For 'relation' type (cross-referencing other collections)
   isMultiple?: boolean;      // For 'relation' type (allow selecting multiple related records)
   isCalculated?: boolean;    // Is this field dynamically calculated via formula?
