@@ -87,6 +87,7 @@ interface TemplateNotification {
   template: RecordTemplate;
   period: string; // "2026-06" or "2026"
   message: string;
+  targetDate: Date;
 }
 
 const templates = ref<RecordTemplate[]>([]);
@@ -617,44 +618,68 @@ const checkAutomatedTemplates = () => {
   if (!activeCollection.value || templates.value.length === 0) return;
 
   const today = new Date();
-  const currentYear = today.getFullYear();
-  const currentMonth = today.getMonth(); // 0-11
+  const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   
+  const monthNames = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+
   for (const t of templates.value) {
     if (!t.isAutomated) continue;
 
-    let targetDate: Date | null = null;
-    let period = '';
+    const candidates: { targetDate: Date; period: string }[] = [];
 
     if (t.recurrence === 'monthly' && t.recurrenceDay) {
-      // Safe day selection (cap at 28 to avoid month overflow check issues)
+      const currentYear = today.getFullYear();
+      const currentMonth = today.getMonth();
       const day = Math.min(t.recurrenceDay, 28);
-      targetDate = new Date(currentYear, currentMonth, day);
-      const mm = String(currentMonth + 1).padStart(2, '0');
-      period = `${currentYear}-${mm}`;
+
+      for (let offset = -1; offset <= 1; offset++) {
+        let y = currentYear;
+        let m = currentMonth + offset;
+        if (m < 0) {
+          m = 11;
+          y -= 1;
+        } else if (m > 11) {
+          m = 0;
+          y += 1;
+        }
+        const targetDate = new Date(y, m, day);
+        const mm = String(m + 1).padStart(2, '0');
+        const period = `${y}-${mm}`;
+        candidates.push({ targetDate, period });
+      }
     } else if (t.recurrence === 'yearly' && t.recurrenceDay && t.recurrenceMonth) {
-      targetDate = new Date(currentYear, t.recurrenceMonth - 1, t.recurrenceDay);
-      period = `${currentYear}`;
+      const currentYear = today.getFullYear();
+      for (let offset = -1; offset <= 1; offset++) {
+        const y = currentYear + offset;
+        const targetDate = new Date(y, t.recurrenceMonth - 1, t.recurrenceDay);
+        const period = `${y}`;
+        candidates.push({ targetDate, period });
+      }
     }
 
-    if (targetDate && period) {
-      const diffTime = Math.abs(today.getTime() - targetDate.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    for (const cand of candidates) {
+      if (t.lastGeneratedPeriod === cand.period) continue;
 
-      if (diffDays <= 10) {
-        if (t.lastGeneratedPeriod !== period) {
-          const monthNames = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
-          const periodName = t.recurrence === 'monthly' 
-            ? `${monthNames[currentMonth]} ${currentYear}`
-            : `${currentYear}`;
-            
-          activeNotification.value = {
-            template: t,
-            period,
-            message: `Rappel automatique : Ton modèle de ligne "${t.name}" est prêt à être inséré pour ${periodName}.`
-          };
-          break; // Show one alert at a time
-        }
+      const targetMidnight = new Date(cand.targetDate.getFullYear(), cand.targetDate.getMonth(), cand.targetDate.getDate());
+      const diffTime = targetMidnight.getTime() - todayMidnight.getTime();
+      const diffDays = diffTime / (1000 * 60 * 60 * 24);
+
+      // Trigger if today is starting 10 days before targetMidnight (diffDays <= 10)
+      // and keep alerting up to 30 days after targetMidnight (diffDays >= -30) if not yet generated
+      if (diffDays <= 10 && diffDays >= -30) {
+        const targetMonth = cand.targetDate.getMonth();
+        const targetYear = cand.targetDate.getFullYear();
+        const periodName = t.recurrence === 'monthly'
+          ? `${monthNames[targetMonth]} ${targetYear}`
+          : `${targetYear}`;
+
+        activeNotification.value = {
+          template: t,
+          period: cand.period,
+          targetDate: cand.targetDate,
+          message: `Rappel automatique : Ton modèle de ligne "${t.name}" est prêt à être inséré pour ${periodName}.`
+        };
+        return; // Show one alert at a time
       }
     }
   }
@@ -664,7 +689,15 @@ const triggerAutomatedTemplate = (notif: TemplateNotification) => {
   const freshData = JSON.parse(JSON.stringify(notif.template.data));
   activeCollection.value?.fields.forEach(f => {
     if (f.type === 'date') {
-      freshData[f.key] = new Date().toISOString().split('T')[0];
+      if (notif.targetDate) {
+        const d = notif.targetDate;
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        freshData[f.key] = `${yyyy}-${mm}-${dd}`;
+      } else {
+        freshData[f.key] = new Date().toISOString().split('T')[0];
+      }
     } else if (freshData[f.key] === undefined) {
       if (f.type === 'boolean') freshData[f.key] = false;
       else if (f.type === 'tags') freshData[f.key] = [];
@@ -690,6 +723,40 @@ const dismissNotification = async (notif: TemplateNotification) => {
   }
 };
 
+const getClosestTargetDate = (t: RecordTemplate): Date => {
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  
+  if (t.recurrence === 'yearly' && t.recurrenceDay && t.recurrenceMonth) {
+    const candidates = [
+      new Date(currentYear - 1, t.recurrenceMonth - 1, t.recurrenceDay),
+      new Date(currentYear, t.recurrenceMonth - 1, t.recurrenceDay),
+      new Date(currentYear + 1, t.recurrenceMonth - 1, t.recurrenceDay),
+    ];
+    candidates.sort((a, b) => Math.abs(a.getTime() - today.getTime()) - Math.abs(b.getTime() - today.getTime()));
+    return candidates[0];
+  } else if (t.recurrence === 'monthly' && t.recurrenceDay) {
+    const currentMonth = today.getMonth();
+    const candidates: Date[] = [];
+    
+    for (let offset = -1; offset <= 1; offset++) {
+      let y = currentYear;
+      let m = currentMonth + offset;
+      if (m < 0) {
+        m = 11;
+        y -= 1;
+      } else if (m > 11) {
+        m = 0;
+        y += 1;
+      }
+      candidates.push(new Date(y, m, Math.min(t.recurrenceDay, 28)));
+    }
+    candidates.sort((a, b) => Math.abs(a.getTime() - today.getTime()) - Math.abs(b.getTime() - today.getTime()));
+    return candidates[0];
+  }
+  return today;
+};
+
 const applyTemplate = (event: Event) => {
   const target = event.target as HTMLSelectElement;
   const templateId = target.value;
@@ -702,9 +769,21 @@ const applyTemplate = (event: Event) => {
         if (f.type === 'boolean') clonedData[f.key] = false;
         else if (f.type === 'tags') clonedData[f.key] = [];
         else if (f.type === 'number') clonedData[f.key] = undefined;
-        else if (f.type === 'date') clonedData[f.key] = new Date().toISOString().split('T')[0];
+        else if (f.type === 'date') {
+          const d = t.isAutomated ? getClosestTargetDate(t) : new Date();
+          const yyyy = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          const dd = String(d.getDate()).padStart(2, '0');
+          clonedData[f.key] = `${yyyy}-${mm}-${dd}`;
+        }
         else if (f.type === 'relation') clonedData[f.key] = f.isMultiple ? [] : '';
         else clonedData[f.key] = '';
+      } else if (f.type === 'date' && t.isAutomated) {
+        const d = getClosestTargetDate(t);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        clonedData[f.key] = `${yyyy}-${mm}-${dd}`;
       }
     });
     recordFormData.value = clonedData;
